@@ -19,11 +19,13 @@
 
 package org.killbill.billing.plugin.notification.setup;
 
+import java.sql.SQLException;
 import java.util.Hashtable;
 
 import javax.servlet.Servlet;
 import javax.servlet.http.HttpServlet;
 
+import org.flywaydb.core.Flyway;
 import org.killbill.billing.osgi.api.OSGIPluginProperties;
 import org.killbill.billing.osgi.libs.killbill.KillbillActivatorBase;
 import org.killbill.billing.osgi.libs.killbill.OSGIKillbillEventDispatcher;
@@ -31,13 +33,19 @@ import org.killbill.billing.plugin.api.notification.PluginConfigurationEventHand
 import org.killbill.billing.plugin.core.config.PluginEnvironmentConfig;
 import org.killbill.billing.plugin.core.resources.jooby.PluginApp;
 import org.killbill.billing.plugin.core.resources.jooby.PluginAppBuilder;
+import org.killbill.billing.plugin.dao.PluginDao;
+import org.killbill.billing.plugin.dao.PluginDao.DBEngine;
 import org.killbill.billing.plugin.notification.api.InvoiceFormatterFactory;
 import org.killbill.billing.plugin.notification.dao.ConfigurationDao;
 import org.killbill.billing.plugin.notification.http.EmailNotificationServlet;
 import org.osgi.framework.BundleContext;
 import org.osgi.util.tracker.ServiceTracker;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class EmailNotificationActivator extends KillbillActivatorBase {
+
+    private static final Logger logger = LoggerFactory.getLogger(EmailNotificationActivator.class);
 
     public static final String PLUGIN_NAME = "killbill-email-notifications";
     public static final String PROPERTY_PREFIX = "org.killbill.billing.plugin.email-notifications.";
@@ -51,7 +59,9 @@ public class EmailNotificationActivator extends KillbillActivatorBase {
         super.start(context);
 
         final String region = PluginEnvironmentConfig.getRegion(configProperties.getProperties());
-        
+
+        runMigrationsIfEnabled();
+
         // Register an event listener for plugin configuration (optional)
         emailNotificationConfigurationHandler = new EmailNotificationConfigurationHandler(region, PLUGIN_NAME, killbillAPI, dataSource);
         final EmailNotificationConfiguration globalConfiguration = emailNotificationConfigurationHandler.createConfigurable(configProperties.getProperties());
@@ -106,6 +116,44 @@ public class EmailNotificationActivator extends KillbillActivatorBase {
         final Hashtable<String, String> props = new Hashtable<String, String>();
         props.put(OSGIPluginProperties.PLUGIN_NAME_PROP, PLUGIN_NAME);
         registrar.registerService(context, Servlet.class, servlet, props);
+    }
+
+    private void runMigrationsIfEnabled() {
+        if (EmailNotificationConfiguration.shouldRunMigrations(configProperties.getProperties())) {
+            DBEngine dbEngine;
+            try {
+                dbEngine = PluginDao.getDBEngine(dataSource.getDataSource());
+            } catch (final SQLException e) {
+                logger.warn("Unable to determine database engine, defaulting to MySQL migrations", e);
+                dbEngine = DBEngine.MYSQL;
+            }
+
+            final String locations;
+            switch (dbEngine) {
+                case POSTGRESQL:
+                    locations = "classpath:migration/postgresql";
+                    break;
+                case GENERIC:
+                case H2:
+                case MYSQL:
+                default:
+                    // H2 and GENERIC use MySQL-compatible migration scripts
+                    locations = "classpath:migration/mysql";
+                    break;
+            }
+
+            final Flyway flyway = Flyway.configure(getClass().getClassLoader())
+                                        .dataSource(dataSource.getDataSource())
+                                        .locations(locations)
+                                        .table("email_notifications_schema_history")
+                                        .baselineOnMigrate(true)
+                                        .baselineVersion("0")
+                                        .load();
+            flyway.migrate();
+        } else {
+            logger.info("Skipping Flyway migrations as '{}' is not set to true",
+                        "org.killbill.billing.plugin.emailnotifications.shouldRunMigrations");
+        }
     }
 
 }

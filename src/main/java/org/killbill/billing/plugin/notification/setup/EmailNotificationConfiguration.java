@@ -33,6 +33,7 @@ public class EmailNotificationConfiguration {
 
     private static final String SMTP_PROPERTY_PREFIX = EmailNotificationActivator.PROPERTY_PREFIX + "smtp.";
     private static final String CREDENTIALS_PROPERTY_PREFIX = EmailNotificationActivator.PROPERTY_PREFIX + "credentials.";
+    private static final String SHOULD_RUN_MIGRATIONS_PROPERTY = "org.killbill.billing.plugin.emailnotifications.runMigrations";
 
     // SMTP related properties
     private final SmtpProperties smtp;
@@ -105,9 +106,12 @@ public class EmailNotificationConfiguration {
  		return adminUsername;
  	}
 
- 	public String getAdminPassword() {
+    public String getAdminPassword() {
  		return adminPassword;
  	}
 
+    public static boolean shouldRunMigrations(final Properties properties) {
+        return Boolean.parseBoolean(properties.getProperty(SHOULD_RUN_MIGRATIONS_PROPERTY, "true"));
+    }
 
 }
